@@ -18,7 +18,7 @@ function response(room, msg, sender, isGroupChat, replier) {
             });
             
             // HTTP 연결 설정 (타임아웃 시간 대폭 증가)
-            var url = new java.net.URL("http://192.168.0.15:8080/youtube");
+            var url = new java.net.URL("https://ytchoi.vercel.app/api/youtube");
             var connection = url.openConnection();
             connection.setRequestMethod("POST");
             connection.setRequestProperty("Content-Type", "application/json");
