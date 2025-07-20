@@ -173,8 +173,16 @@ def handler(request):
         }
 
     try:
-        # 요청 데이터 파싱
-        body = request.get_json() or {}
+        # 요청 데이터 파싱 (Vercel request 객체에서)
+        import json as json_module
+        if hasattr(request, 'get_json'):
+            body = request.get_json() or {}
+        elif hasattr(request, 'json'):
+            body = request.json or {}
+        else:
+            # request.body에서 직접 파싱
+            body_str = request.body.decode('utf-8') if hasattr(request, 'body') else '{}'
+            body = json_module.loads(body_str) if body_str else {}
         
         room = body.get('room')
         sender = body.get('sender')
