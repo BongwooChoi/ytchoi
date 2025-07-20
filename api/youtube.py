@@ -1,10 +1,8 @@
-from flask import Flask, request, jsonify
 import re
 import os
 import threading
-from dotenv import load_dotenv
+import json
 import sys
-import importlib.util
 
 # 현재 디렉토리를 sys.path에 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,14 +14,9 @@ sys.path.append(os.path.join(parent_dir, 'python_bot'))
 from python_bot.youtube_transcript import get_youtube_transcript
 from python_bot.gemini_client import summarize_with_gemini
 
-# .env 파일에서 환경변수 로드
-load_dotenv()
-
 # 로깅 설정
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-app = Flask(__name__)
 
 # 동시 처리 제한을 위한 세마포어
 semaphore = threading.Semaphore(5) 
@@ -52,44 +45,67 @@ def get_video_id(url):
 def handler(request):
     """Vercel 서버리스 함수 핸들러"""
     
+    # HTTP 메서드 확인
     if request.method != 'POST':
-        return jsonify({"error": "Method not allowed"}), 405
+        return {
+            'statusCode': 405,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({"error": "Method not allowed"})
+        }
         
+    # 동시 처리 제한
     if not semaphore.acquire(blocking=False):
         logging.warning("동시 처리 한도 초과로 요청을 거부합니다.")
-        return jsonify({"error": "Too many requests, please try again later."}), 429
+        return {
+            'statusCode': 429,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({"error": "Too many requests, please try again later."})
+        }
 
     try:
-        # force=True 옵션을 추가하여 Content-Type 검사를 건너뛰고 데이터를 JSON으로 강제 해석합니다.
-        data = request.get_json(force=True)
-        if not data:
-            logging.error("요청 데이터가 없습니다.")
-            return jsonify({"error": "Request body is empty"}), 400
-
-        room = data.get('room')
-        sender = data.get('sender')
-        message = data.get('msg')
+        # 요청 데이터 파싱
+        body = request.get_json() or {}
+        
+        room = body.get('room')
+        sender = body.get('sender')
+        message = body.get('msg')
         
         logging.info(f"[{room}] '{sender}'로부터 메시지 수신: {message}")
 
         if not message:
-            return jsonify({"status": "no_message"}), 200
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({"status": "no_message"})
+            }
 
         # URL 정규화 및 ID 추출
         normalized_url = normalize_url(message)
         if not normalized_url:
             logging.info(f"YouTube URL이 아님: {message}")
-            return jsonify({"status": "not_a_youtube_url"}), 200
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({"status": "not_a_youtube_url"})
+            }
             
         video_id = get_video_id(normalized_url)
         if not video_id:
             logging.error(f"비디오 ID를 추출할 수 없음: {normalized_url}")
-            return jsonify({"error": "Could not extract video ID"}), 400
+            return {
+                'statusCode': 400,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({"error": "Could not extract video ID"})
+            }
 
         # 중복 처리 방지
         if video_id in processed_urls:
             logging.info(f"이미 처리된 URL입니다: {video_id}")
-            return jsonify({"status": "already_processed"}), 200
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({"status": "already_processed"})
+            }
             
         logging.info(f"처리 시작: {normalized_url} (ID: {video_id})")
 
@@ -98,7 +114,11 @@ def handler(request):
         
         if not transcript:
             logging.warning(f"자막 추출 실패: {video_id}")
-            return jsonify({"error": "자막을 추출할 수 없습니다."}), 400
+            return {
+                'statusCode': 400,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({"error": "자막을 추출할 수 없습니다."})
+            }
 
         logging.info(f"✅ '{language}' 자막 추출 성공 (길이: {len(transcript)})")
         
@@ -115,7 +135,11 @@ def handler(request):
         
         if not summary:
             logging.error("요약 생성 실패")
-            return jsonify({"error": "요약을 생성할 수 없습니다."}), 500
+            return {
+                'statusCode': 500,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({"error": "요약을 생성할 수 없습니다."})
+            }
 
         logging.info("✅ 요약 생성 완료")
 
@@ -126,14 +150,18 @@ def handler(request):
             "transcript_length": len(transcript)
         }
 
-        return jsonify(response_data)
+        return {
+            'statusCode': 200,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps(response_data)
+        }
 
     except Exception as e:
         logging.error(f"처리 중 오류 발생: {e}", exc_info=True)
-        return jsonify({"error": "An internal error occurred"}), 500
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({"error": "An internal error occurred"})
+        }
     finally:
-        semaphore.release()
-
-# Vercel 진입점
-def main(request):
-    return handler(request) 
+        semaphore.release() 
