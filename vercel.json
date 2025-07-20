@@ -4,10 +4,7 @@
       "runtime": "python3.9"
     }
   },
-  "env": {
-    "APIFY_API_TOKEN": "@apify_api_token",
-    "GEMINI_API_KEY": "@gemini_api_key"
-  },
+
   "rewrites": [
     {
       "source": "/youtube",
