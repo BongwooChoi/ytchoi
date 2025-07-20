@@ -1,0 +1,35 @@
+# 환경 변수 파일들
+.env
+.env.local
+.env.production
+.env.staging
+
+# Python 캐시 파일들
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 로그 파일들
+*.log
+
+# 임시 파일들
+*.tmp
+*.temp
+
+# IDE 파일들
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS 파일들
+.DS_Store
+Thumbs.db
+
+# Node.js (혹시 필요할 경우)
+node_modules/
+npm-debug.log*
+
+# Vercel
+.vercel 
