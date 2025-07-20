@@ -1,3 +1,4 @@
+from http.server import BaseHTTPRequestHandler
 import re
 import os
 import threading
@@ -152,134 +153,127 @@ def summarize_with_gemini(transcript, video_title="YouTube 영상"):
         logging.error(f"Gemini API 호출 중 오류 발생: {e}")
         return None
 
-def handler(request):
-    """Vercel 서버리스 함수 핸들러"""
-    
-    # HTTP 메서드 확인
-    if request.method != 'POST':
-        return {
-            'statusCode': 405,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({"error": "Method not allowed"})
-        }
-        
-    # 동시 처리 제한
-    if not semaphore.acquire(blocking=False):
-        logging.warning("동시 처리 한도 초과로 요청을 거부합니다.")
-        return {
-            'statusCode': 429,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({"error": "Too many requests, please try again later."})
-        }
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        # 동시 처리 제한
+        if not semaphore.acquire(blocking=False):
+            logging.warning("동시 처리 한도 초과로 요청을 거부합니다.")
+            self.send_response(429)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Too many requests, please try again later."}).encode())
+            return
 
-    try:
-        # 요청 데이터 파싱 (Vercel request 객체에서)
-        import json as json_module
-        if hasattr(request, 'get_json'):
-            body = request.get_json() or {}
-        elif hasattr(request, 'json'):
-            body = request.json or {}
-        else:
-            # request.body에서 직접 파싱
-            body_str = request.body.decode('utf-8') if hasattr(request, 'body') else '{}'
-            body = json_module.loads(body_str) if body_str else {}
-        
-        room = body.get('room')
-        sender = body.get('sender')
-        message = body.get('msg')
-        
-        logging.info(f"[{room}] '{sender}'로부터 메시지 수신: {message}")
-
-        if not message:
-            return {
-                'statusCode': 200,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({"status": "no_message"})
-            }
-
-        # URL 정규화 및 ID 추출
-        normalized_url = normalize_url(message)
-        if not normalized_url:
-            logging.info(f"YouTube URL이 아님: {message}")
-            return {
-                'statusCode': 200,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({"status": "not_a_youtube_url"})
-            }
+        try:
+            # Content-Length 헤더에서 요청 본문 크기 가져오기
+            content_length = int(self.headers.get('Content-Length', 0))
             
-        video_id = get_video_id(normalized_url)
-        if not video_id:
-            logging.error(f"비디오 ID를 추출할 수 없음: {normalized_url}")
-            return {
-                'statusCode': 400,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({"error": "Could not extract video ID"})
-            }
-
-        # 중복 처리 방지
-        if video_id in processed_urls:
-            logging.info(f"이미 처리된 URL입니다: {video_id}")
-            return {
-                'statusCode': 200,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({"status": "already_processed"})
-            }
+            # 요청 본문 읽기
+            post_data = self.rfile.read(content_length)
             
-        logging.info(f"처리 시작: {normalized_url} (ID: {video_id})")
+            # JSON 파싱
+            body = json.loads(post_data.decode('utf-8')) if post_data else {}
+            
+            room = body.get('room')
+            sender = body.get('sender')
+            message = body.get('msg')
+            
+            logging.info(f"[{room}] '{sender}'로부터 메시지 수신: {message}")
 
-        # 자막 추출 (제목도 함께)
-        transcript, language, video_title = get_youtube_transcript(normalized_url)
-        
-        if not transcript:
-            logging.warning(f"자막 추출 실패: {video_id}")
-            return {
-                'statusCode': 400,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({"error": "자막을 추출할 수 없습니다."})
+            if not message:
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "no_message"}).encode())
+                return
+
+            # URL 정규화 및 ID 추출
+            normalized_url = normalize_url(message)
+            if not normalized_url:
+                logging.info(f"YouTube URL이 아님: {message}")
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "not_a_youtube_url"}).encode())
+                return
+                
+            video_id = get_video_id(normalized_url)
+            if not video_id:
+                logging.error(f"비디오 ID를 추출할 수 없음: {normalized_url}")
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "Could not extract video ID"}).encode())
+                return
+
+            # 중복 처리 방지
+            if video_id in processed_urls:
+                logging.info(f"이미 처리된 URL입니다: {video_id}")
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "already_processed"}).encode())
+                return
+                
+            logging.info(f"처리 시작: {normalized_url} (ID: {video_id})")
+
+            # 자막 추출 (제목도 함께)
+            transcript, language, video_title = get_youtube_transcript(normalized_url)
+            
+            if not transcript:
+                logging.warning(f"자막 추출 실패: {video_id}")
+                self.send_response(400)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "자막을 추출할 수 없습니다."}).encode())
+                return
+
+            logging.info(f"✅ '{language}' 자막 추출 성공 (길이: {len(transcript)})")
+            
+            # 영상 제목이 없는 경우 기본값 설정
+            if not video_title:
+                logging.warning("⚠️ 영상 제목을 가져오지 못했습니다.")
+                video_title = "제목 없음"
+            else:
+                logging.info(f"🎥 영상 제목: {video_title}")
+
+            # Gemini로 요약 생성
+            logging.info("Gemini AI로 요약 생성 중...")
+            summary = summarize_with_gemini(transcript, video_title)
+            
+            if not summary:
+                logging.error("요약 생성 실패")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"error": "요약을 생성할 수 없습니다."}).encode())
+                return
+
+            logging.info("✅ 요약 생성 완료")
+
+            response_data = {
+                "summary": summary,
+                "video_title": video_title,
+                "language": language,
+                "transcript_length": len(transcript)
             }
 
-        logging.info(f"✅ '{language}' 자막 추출 성공 (길이: {len(transcript)})")
-        
-        # 영상 제목이 없는 경우 기본값 설정
-        if not video_title:
-            logging.warning("⚠️ 영상 제목을 가져오지 못했습니다.")
-            video_title = "제목 없음"
-        else:
-            logging.info(f"🎥 영상 제목: {video_title}")
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response_data).encode())
 
-        # Gemini로 요약 생성
-        logging.info("Gemini AI로 요약 생성 중...")
-        summary = summarize_with_gemini(transcript, video_title)
-        
-        if not summary:
-            logging.error("요약 생성 실패")
-            return {
-                'statusCode': 500,
-                'headers': {'Content-Type': 'application/json'},
-                'body': json.dumps({"error": "요약을 생성할 수 없습니다."})
-            }
+        except Exception as e:
+            logging.error(f"처리 중 오류 발생: {e}", exc_info=True)
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "An internal error occurred"}).encode())
+        finally:
+            semaphore.release()
 
-        logging.info("✅ 요약 생성 완료")
-
-        response_data = {
-            "summary": summary,
-            "video_title": video_title,
-            "language": language,
-            "transcript_length": len(transcript)
-        }
-
-        return {
-            'statusCode': 200,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps(response_data)
-        }
-
-    except Exception as e:
-        logging.error(f"처리 중 오류 발생: {e}", exc_info=True)
-        return {
-            'statusCode': 500,
-            'headers': {'Content-Type': 'application/json'},
-            'body': json.dumps({"error": "An internal error occurred"})
-        }
-    finally:
-        semaphore.release() 
+    def do_GET(self):
+        self.send_response(405)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": "Method not allowed"}).encode()) 
