@@ -2,20 +2,11 @@ import re
 import os
 import threading
 import json
-import sys
-
-# 현재 디렉토리를 sys.path에 추가
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
-sys.path.append(os.path.join(parent_dir, 'python_bot'))
-
-# python_bot 모듈들 임포트
-from python_bot.youtube_transcript import get_youtube_transcript
-from python_bot.gemini_client import summarize_with_gemini
+import requests
+import time
+import logging
 
 # 로깅 설정
-import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 동시 처리 제한을 위한 세마포어
@@ -41,6 +32,125 @@ def get_video_id(url):
     """정규화된 URL에서 비디오 ID를 추출합니다."""
     match = re.search(r"watch\?v=([a-zA-Z0-9_-]+)", url)
     return match.group(1) if match else None
+
+def get_youtube_transcript(youtube_url):
+    """Apify를 사용하여 YouTube 자막을 추출합니다."""
+    from apify_client import ApifyClient
+    
+    # 환경변수에서 API 토큰 가져오기
+    api_token = os.environ.get('APIFY_API_TOKEN')
+    if not api_token:
+        logging.error("APIFY_API_TOKEN 환경변수가 설정되지 않았습니다.")
+        return None, None, None
+    
+    client = ApifyClient(api_token)
+    actor_id = "dB9f4B02ocpTICIEY"  # YouTube Transcript Scraper
+    
+    # 언어 시도 순서
+    languages = ['Korean', 'English', 'Default']
+    
+    for language in languages:
+        try:
+            logging.info(f"➡️ '{language}' 언어로 추출 시도...")
+            
+            run_input = {
+                "startUrls": [youtube_url],
+                "language": language,
+                "includeTimestamps": "No"
+            }
+            
+            logging.info(f"🔍 Apify 요청 데이터: {run_input}")
+            
+            # Actor 실행
+            run = client.actor(actor_id).call(run_input=run_input)
+            
+            # 결과 가져오기 (최대 10번 시도)
+            max_attempts = 10
+            for attempt in range(max_attempts):
+                try:
+                    items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+                    
+                    if items:
+                        item = items[0]
+                        logging.info(f"📄 데이터 항목 {attempt + 1}: {item}")
+                        
+                        transcript = item.get('transcript', '')
+                        video_title = item.get('videoTitle', '')
+                        
+                        if transcript and transcript.strip():
+                            processed_urls.add(get_video_id(youtube_url))
+                            logging.info(f"📊 총 {len(items)}개 항목 처리됨")
+                            logging.info(f"✅ '{language}' 언어 자막 추출 성공! (길이: {len(transcript)} 문자)")
+                            return transcript.strip(), language, video_title
+                        else:
+                            logging.warning(f"❌ '{language}' 언어로 자막을 찾을 수 없습니다.")
+                            break
+                    else:
+                        logging.info(f"⏳ 시도 {attempt + 1}/{max_attempts}: 아직 데이터가 없습니다. 2초 후 재시도...")
+                        time.sleep(2)
+                        
+                except Exception as e:
+                    logging.error(f"데이터 가져오기 오류 (시도 {attempt + 1}): {e}")
+                    time.sleep(2)
+            
+        except Exception as e:
+            logging.error(f"'{language}' 언어 처리 중 오류: {e}")
+            continue
+    
+    logging.error("❌ 모든 언어에서 자막 추출 실패")
+    return None, None, None
+
+def summarize_with_gemini(transcript, video_title="YouTube 영상"):
+    """Google Gemini API를 사용하여 자막을 요약합니다."""
+    import google.generativeai as genai
+    
+    # 환경변수에서 API 키 가져오기
+    api_key = os.environ.get('GEMINI_API_KEY')
+    if not api_key:
+        logging.error("GEMINI_API_KEY 환경변수가 설정되지 않았습니다.")
+        return None
+    
+    try:
+        # Gemini API 설정
+        genai.configure(api_key=api_key)
+        
+        # 모델 선택 (gemini-1.5-flash 사용)
+        model_name = 'gemini-1.5-flash'
+        logging.info(f"'{model_name}' 모델로 요약 생성 중...")
+        
+        model = genai.GenerativeModel(model_name)
+        
+        # 프롬프트 생성
+        prompt = f"""
+다음은 "{video_title}" 영상의 자막입니다. 이를 한국어로 3-5문장으로 간결하게 요약해주세요.
+
+자막 내용:
+{transcript}
+
+요약 조건:
+1. 핵심 내용만 포함
+2. 한국어로 작성
+3. 3-5문장으로 간결하게
+4. 불필요한 감탄사나 반복 제거
+5. 명확하고 이해하기 쉽게 작성
+
+요약:
+"""
+        
+        # API 호출
+        response = model.generate_content(prompt)
+        
+        if response and response.text:
+            summary = response.text.strip()
+            logging.info("✅ Gemini 요약 생성 성공")
+            return summary
+        else:
+            logging.error("Gemini API 응답이 비어있습니다.")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Gemini API 호출 중 오류 발생: {e}")
+        return None
 
 def handler(request):
     """Vercel 서버리스 함수 핸들러"""
