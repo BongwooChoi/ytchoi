@@ -11,9 +11,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # 동시 처리 제한을 위한 세마포어
-semaphore = threading.Semaphore(5) 
-# 처리된 URL 추적 (메모리 기반, 재시작 시 초기화)
-processed_urls = set()
+semaphore = threading.Semaphore(5)
 
 def normalize_url(url):
     """다양한 형태의 YouTube URL을 표준 watch?v=ID 형태로 정규화합니다."""
@@ -79,7 +77,6 @@ def get_youtube_transcript(youtube_url):
                         video_title = item.get('videoTitle', '')
                         
                         if transcript and transcript.strip():
-                            processed_urls.add(get_video_id(youtube_url))
                             logging.info(f"📊 총 {len(items)}개 항목 처리됨")
                             logging.info(f"✅ '{language}' 언어 자막 추출 성공! (길이: {len(transcript)} 문자)")
                             return transcript.strip(), language, video_title
@@ -203,15 +200,6 @@ class handler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": "Could not extract video ID"}).encode())
                 return
 
-            # 중복 처리 방지
-            if video_id in processed_urls:
-                logging.info(f"이미 처리된 URL입니다: {video_id}")
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "already_processed"}).encode())
-                return
-                
             logging.info(f"처리 시작: {normalized_url} (ID: {video_id})")
 
             # 자막 추출 (제목도 함께)
