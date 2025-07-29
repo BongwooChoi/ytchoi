@@ -116,13 +116,20 @@ def summarize_with_gemini(transcript, video_title="YouTube 영상"):
         model_name = 'gemini-2.0-flash'
         logging.info(f"'{model_name}' 모델로 요약 생성 중...")
         
-        model = genai.GenerativeModel(model_name)
+        # 생성 설정 - 출력 토큰 수 늘리기
+        generation_config = genai.types.GenerationConfig(
+            max_output_tokens=2048,  # 최대 출력 토큰 수 (기본값 대비 증가)
+            temperature=0.7,  # 창의성 조절 (0.0-1.0)
+        )
+        
+        model = genai.GenerativeModel(
+            model_name=model_name,
+            generation_config=generation_config
+        )
         
         # 향상된 프롬프트 생성
         prompt = f"""
-다음 YouTube 영상의 정보를 바탕으로 가독성 있는 요약 보고서를 작성해주세요. 
-마크다운 형식이나 특수 문법을 사용하지 말고 일반 텍스트로만 작성해주세요.
-최종 결과는 한국어로 작성해주세요.
+다음 YouTube 영상의 정보를 바탕으로 가독성 있는 한 페이지의 보고서 형태로 요약하세요. 최종 결과는 한국어로 작성하고, 마크다운 문법은 사용하지 마세요.
 
 요약 구조:
 • 영상 개요
