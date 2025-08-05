@@ -25,6 +25,16 @@ def normalize_url(url):
     if match:
         return f"https://www.youtube.com/watch?v={match.group(1)}"
     
+    # youtube.com/live/ID 형태 (라이브 스트림)
+    match = re.search(r"youtube\.com/live/([a-zA-Z0-9_-]+)", url)
+    if match:
+        return f"https://www.youtube.com/watch?v={match.group(1)}"
+    
+    # youtube.com/shorts/ID 형태 (쇼츠)
+    match = re.search(r"youtube\.com/shorts/([a-zA-Z0-9_-]+)", url)
+    if match:
+        return f"https://www.youtube.com/watch?v={match.group(1)}"
+    
     return None
 
 def get_video_id(url):

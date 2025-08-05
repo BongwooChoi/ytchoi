@@ -4,8 +4,8 @@ const scriptName = "YouTube 요약 봇";
  * YouTube URL을 감지하여 자막을 추출하고 AI로 요약하는 봇
  */
 function response(room, msg, sender, isGroupChat, replier) {
-    // YouTube URL 패턴 확인
-    if (msg.includes("youtu.be/") || msg.includes("youtube.com/watch")) {
+    // YouTube URL 패턴 확인 (일반 영상, 라이브, 쇼츠 모두 포함)
+    if (msg.includes("youtu.be/") || msg.includes("youtube.com/watch") || msg.includes("youtube.com/live/") || msg.includes("youtube.com/shorts/")) {
         try {
             // 즉시 처리 시작 메시지 보내기
             replier.reply("🔄 YouTube 영상 요약 중입니다... 잠시만 기다려주세요!");
@@ -37,8 +37,15 @@ function response(room, msg, sender, isGroupChat, replier) {
             
             // 응답 받기
             var responseCode = connection.getResponseCode();
-            if (responseCode === 200) {
-                var inputStream = connection.getInputStream();
+            if (responseCode === 200 || responseCode === 400) {
+                // 성공 응답(200) 또는 클라이언트 오류(400) 모두 JSON으로 처리
+                var inputStream;
+                if (responseCode === 200) {
+                    inputStream = connection.getInputStream();
+                } else {
+                    inputStream = connection.getErrorStream();
+                }
+                
                 var response = "";
                 var reader = new java.io.BufferedReader(new java.io.InputStreamReader(inputStream, "UTF-8"));
                 var line;
@@ -50,8 +57,17 @@ function response(room, msg, sender, isGroupChat, replier) {
                 var result = JSON.parse(response);
                 if (result.summary) {
                     replier.reply("📝 YouTube 영상 요약:\n\n🎥 " + result.video_title + "\n\n" + result.summary);
+                } else if (result.error) {
+                    // 자막이 없거나 다른 오류의 경우 친근한 메시지로 안내
+                    if (result.error.includes("자막을 추출할 수 없습니다")) {
+                        replier.reply("😔 죄송합니다. 이 영상은 자막이 없어서 요약할 수 없어요.\n\n📝 자막이 있는 영상을 올려주시면 요약해드릴게요!");
+                    } else if (result.error.includes("요약을 생성할 수 없습니다")) {
+                        replier.reply("😅 요약 생성 중 문제가 발생했어요. 잠시 후 다시 시도해주세요!");
+                    } else {
+                        replier.reply("❌ 처리 실패: " + result.error);
+                    }
                 } else {
-                    replier.reply("❌ 요약 생성 실패: " + (result.error || "알 수 없는 오류"));
+                    replier.reply("❌ 알 수 없는 오류가 발생했습니다.");
                 }
             } else {
                 replier.reply("❌ 서버 오류 (HTTP " + responseCode + ")");
